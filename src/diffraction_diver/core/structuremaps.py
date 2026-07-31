@@ -84,7 +84,7 @@ def fit_reflection_pair(
     it as real. Otherwise returns a dict with both peaks' full fit
     parameters plus the derived distance (reciprocal pixels), angle
     (degrees, from the vector between the two peak centers), and mean
-    height.
+    intensity.
 
     `highpass_radius` masks out the always-present central/DC peak (see
     `mask_center`) before the presence test or fit runs, so it can't be
@@ -121,7 +121,13 @@ def fit_reflection_pair(
     # from center) gives that single-vector magnitude.
     distance_px = math.hypot(center2[0] - center1[0], center2[1] - center1[1]) / 2
     angle_deg = math.degrees(math.atan2(center2[0] - center1[0], center2[1] - center1[1])) % 180
-    mean_height = (height1 + height2) / 2
+    # Mean of the raw (experimental) region data, not the fitted Gaussian
+    # amplitude - matches the notebook's `structuremaps`
+    # (`np.mean(tmp1)`/`np.mean(tmp2)`, the un-fitted peak crops). The fitted
+    # height is far noisier patch to patch since it's sensitive to how
+    # sharply the small crop happens to fit, whereas the raw regional mean
+    # is what "degree of crystallinity" was actually measured from.
+    mean_intensity = (float(np.mean(region1)) + float(np.mean(region2))) / 2
 
     return {
         "region1": region1,
@@ -132,7 +138,7 @@ def fit_reflection_pair(
         "center2": center2,
         "distance_px": distance_px,
         "angle_deg": angle_deg,
-        "mean_height": mean_height,
+        "mean_intensity": mean_intensity,
     }
 
 
@@ -206,7 +212,7 @@ def compute_structure_maps(
                 else result["distance_px"]
             )
             angle_map[i] = result["angle_deg"]
-            intensity_map[i] = result["mean_height"]
+            intensity_map[i] = result["mean_intensity"]
         if progress_cb is not None and (i % 20 == 0 or i == total - 1):
             progress_cb(i + 1, total)
 

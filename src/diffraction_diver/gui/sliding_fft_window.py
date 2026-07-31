@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from diffraction_diver.core import analysis
 from diffraction_diver.gui import plotting
+from diffraction_diver.gui.calibration_widget import CalibrationWidget
 from diffraction_diver.gui.canvas_utils import embed_figure
 from diffraction_diver.gui.patch_selector import PatchSelectorWidget
 from diffraction_diver.gui.workers import AnalysisWorker, FFTWorker
@@ -59,10 +60,14 @@ class SlidingFFTWindow(QMainWindow):
         controls_layout = QVBoxLayout(controls)
         self.patch_selector = PatchSelectorWidget(show_patch_preview=True)
         self.patch_selector.changed.connect(self._on_patch_changed)
+        self.patch_selector.image_loaded.connect(self._on_image_loaded)
         controls_layout.addWidget(self.patch_selector)
         controls_layout.addWidget(self._build_fft_run_group())
         self.analysis_group = self._build_analysis_group()
         controls_layout.addWidget(self.analysis_group)
+        self.calibration = CalibrationWidget()
+        self.calibration.changed.connect(self._on_calibration_changed)
+        controls_layout.addWidget(self.calibration)
         controls_layout.addStretch(1)
 
         controls_scroll = QScrollArea()
@@ -158,7 +163,15 @@ class SlidingFFTWindow(QMainWindow):
         # analysis under a new, mismatched label.
         self.fft_stack = None
         self.analysis_group.setEnabled(False)
-        self.run_fft_btn.setEnabled(self.patch_selector.raw_image is not None)
+        raw_image = self.patch_selector.raw_image
+        self.run_fft_btn.setEnabled(raw_image is not None)
+        self.calibration.set_image_reference(raw_image.shape[0] if raw_image is not None else None)
+
+    def _on_image_loaded(self) -> None:
+        self.calibration.reset()
+
+    def _on_calibration_changed(self) -> None:
+        self.patch_selector.set_pixel_size(self.calibration.pixel_size_nm)
 
     # --------------------------------------------------------- sliding FFT
 
@@ -255,12 +268,24 @@ class SlidingFFTWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = QWidget()
+        # Without this, Qt can leave stale pixels un-repainted in any empty
+        # margin beside a narrower-than-the-viewport figure when scrolling -
+        # a partial-repaint artifact, not a data/plotting bug.
+        content.setAutoFillBackground(True)
         content_layout = QVBoxLayout(content)
         scroll.setWidget(content)
         tab_layout.addWidget(scroll)
 
         save_btn = QPushButton("Save results…")
         tab_layout.addWidget(save_btn)
+
+        # Real-space grids (Loadings/Mixing/Abundance - one value per patch
+        # position) can carry a scale bar; the Components grids (FFT-domain
+        # patterns) can't - a spatial scale is meaningless in reciprocal space.
+        map_scale_bar = None
+        if self.calibration.pixel_size_nm is not None:
+            map_pixel_size = self.window_step_spin.value() * self.calibration.pixel_size_nm
+            map_scale_bar = {"pixel_size": map_pixel_size, "units": "nm"}
 
         if method == "pca":
             components, loadings, singular_values = result
@@ -269,7 +294,10 @@ class SlidingFFTWindow(QMainWindow):
                 [np.abs(c) for c in components], [f"PC {i + 1}" for i in range(n)], suptitle="PCA Components"
             )
             load_fig = plotting.make_grid_figure(
-                plotting.map_images(loadings, n), [f"Loading {i + 1}" for i in range(n)], suptitle="PCA Loadings"
+                plotting.map_images(loadings, n),
+                [f"Loading {i + 1}" for i in range(n)],
+                suptitle="PCA Loadings",
+                scale_bar=map_scale_bar,
             )
             content_layout.addWidget(embed_figure(comp_fig))
             content_layout.addWidget(embed_figure(load_fig))
@@ -288,6 +316,7 @@ class SlidingFFTWindow(QMainWindow):
                 plotting.map_images(maps, n),
                 [f"{map_label} {i + 1}" for i in range(n)],
                 suptitle=f"{label} {map_label} Coefficients",
+                scale_bar=map_scale_bar,
             )
             content_layout.addWidget(embed_figure(comp_fig))
             content_layout.addWidget(embed_figure(map_fig))

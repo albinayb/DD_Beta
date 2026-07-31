@@ -21,10 +21,14 @@ from diffraction_diver.core import fft as core_fft
 def radial_profile(spectrum_magnitude: np.ndarray) -> np.ndarray:
     """Azimuthally-averaged intensity vs. integer-pixel radius from center.
 
-    Returns an array indexed by radius bin (0, 1, 2, ... out to the corner
-    distance), each entry the mean magnitude of all pixels at that integer
-    radius from the zero-frequency center. Length depends only on
-    `spectrum_magnitude.shape`, so it's identical for every patch sharing the
+    Returns an array indexed by radius bin (0, 1, 2, ...), each entry the
+    mean magnitude of all pixels at that integer radius from the
+    zero-frequency center. Truncated at the largest radius that's still a
+    *complete* circle within the (square) array - beyond that, bins only
+    include the few pixels near the corners, so their average is built from
+    too little data and tends to swing noisily rather than reflect anything
+    real. Length depends only on `spectrum_magnitude.shape` (specifically
+    `min(shape) // 2 + 1`), so it's identical for every patch sharing the
     same crop size.
     """
     size_row, size_col = spectrum_magnitude.shape
@@ -36,7 +40,10 @@ def radial_profile(spectrum_magnitude: np.ndarray) -> np.ndarray:
     counts = np.bincount(r_bin)
     with np.errstate(invalid="ignore", divide="ignore"):
         profile = sums / counts
-    return np.nan_to_num(profile)
+    profile = np.nan_to_num(profile)
+
+    max_radius = min(size_row, size_col) // 2
+    return profile[: max_radius + 1]
 
 
 def compute_radial_profile_stack(
@@ -75,6 +82,22 @@ def compute_radial_profile_stack(
             progress_cb(i + 1, total)
 
     return stack.reshape(size_x, size_y, first_profile.shape[0]), size_x, size_y
+
+
+def subtract_background(profile: np.ndarray, outer_fraction: float = 0.2) -> np.ndarray:
+    """Subtract each profile's own outer-radius average as a flat background.
+
+    Operates along the last axis, so it works the same way on a single
+    profile (1D) or a whole stack (any leading shape, e.g.
+    `(size_x, size_y, n_bins)`) - each profile gets its own background
+    estimate from its own outer radius range, not one value shared across
+    every patch. Cheap enough to apply on the fly at display time rather
+    than baking it into the stored (raw) profile/stack.
+    """
+    n_bins = profile.shape[-1]
+    outer_bins = max(1, round(n_bins * outer_fraction))
+    background = profile[..., n_bins - outer_bins :].mean(axis=-1, keepdims=True)
+    return profile - background
 
 
 def integrate_window(profile_stack: np.ndarray, center_bin: int, width: int) -> np.ndarray:

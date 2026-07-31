@@ -5,7 +5,7 @@ import traceback
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
-from diffraction_diver.core import analysis, fft, radialprofile, structuremaps
+from diffraction_diver.core import analysis, carbontools, fft, radialprofile, structuremaps
 
 
 class FFTWorker(QObject):
@@ -113,6 +113,67 @@ class StructureMapWorker(QObject):
                 self.pixel_size_nm,
                 self.min_peak_ratio,
                 self.highpass_radius,
+                progress_cb=lambda done, total: self.progress.emit(done, total),
+            )
+        except Exception:
+            self.error.emit(traceback.format_exc())
+            return
+        self.finished.emit(spacing_map, angle_map, intensity_map)
+
+
+class OrientationMapWorker(QObject):
+    """Per-patch auto-find batch worker for Carbon Tools - see
+    `core.carbontools.compute_orientation_maps`. Distinct from
+    `StructureMapWorker`, which tracks one reflection from a fixed position."""
+
+    progress = Signal(int, int)
+    finished = Signal(object, object, object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        raw_image: np.ndarray,
+        window_size: int,
+        window_step: int,
+        hamming: bool,
+        crop_size: int,
+        r_min: float,
+        r_max: float,
+        fit_rad: int,
+        pixel_size_nm: float | None,
+        min_peak_ratio: float,
+        highpass_radius: float,
+        mask: np.ndarray | None = None,
+    ):
+        super().__init__()
+        self.raw_image = raw_image
+        self.window_size = window_size
+        self.window_step = window_step
+        self.hamming = hamming
+        self.crop_size = crop_size
+        self.r_min = r_min
+        self.r_max = r_max
+        self.fit_rad = fit_rad
+        self.pixel_size_nm = pixel_size_nm
+        self.min_peak_ratio = min_peak_ratio
+        self.highpass_radius = highpass_radius
+        self.mask = mask
+
+    def run(self) -> None:
+        try:
+            spacing_map, angle_map, intensity_map = carbontools.compute_orientation_maps(
+                self.raw_image,
+                self.window_size,
+                self.window_step,
+                self.hamming,
+                self.crop_size,
+                self.r_min,
+                self.r_max,
+                self.fit_rad,
+                self.pixel_size_nm,
+                self.min_peak_ratio,
+                self.highpass_radius,
+                mask=self.mask,
                 progress_cb=lambda done, total: self.progress.emit(done, total),
             )
         except Exception:

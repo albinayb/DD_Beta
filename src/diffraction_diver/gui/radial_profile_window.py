@@ -10,6 +10,8 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -104,14 +106,25 @@ class RadialProfileWindow(QMainWindow):
         map_scroll = QScrollArea()
         map_scroll.setWidgetResizable(True)
         map_content = QWidget()
+        # Without this, Qt can leave stale pixels un-repainted in the empty
+        # margin beside these (narrower-than-the-viewport) canvases when
+        # scrolling - a partial-repaint artifact, not a data/plotting bug.
+        map_content.setAutoFillBackground(True)
         map_layout = QVBoxLayout(map_content)
+        # Both figures keep a fixed size for the window's whole life (see
+        # draw_labeled_image/draw_radial_profile) - neither is ever resized
+        # by draw_grid's N-image grid sizing, which was causing the canvas
+        # to shrink/regrow on every scan update and left stale paint behind.
+        self.map_canvas = FigureCanvas(Figure(figsize=(6, 6)))
+        size_canvas_to_figure(self.map_canvas)
+        map_layout.addWidget(self.map_canvas)
         # The mean profile (across every patch) persists here too, with the
         # current scan band highlighted, so the "which spacing am I looking
         # at" context stays visible after leaving the live single-patch tab.
         self.map_profile_canvas = FigureCanvas(Figure(figsize=(6, 3)))
+        size_canvas_to_figure(self.map_profile_canvas)
         map_layout.addWidget(self.map_profile_canvas)
-        self.map_canvas = FigureCanvas(Figure(figsize=(6, 6)))
-        map_layout.addWidget(self.map_canvas)
+        map_layout.addStretch(1)
         map_scroll.setWidget(map_content)
         map_tab_layout.addWidget(map_scroll)
 
@@ -166,6 +179,19 @@ class RadialProfileWindow(QMainWindow):
         form.addRow("Profile width (px)", self.profile_width_spin)
         v.addLayout(form)
 
+        self.subtract_background_check = QCheckBox("Subtract background (outer radius average)")
+        self.subtract_background_check.stateChanged.connect(self._on_scan_changed)
+        v.addWidget(self.subtract_background_check)
+
+        bg_form = QFormLayout()
+        self.background_fraction_spin = QDoubleSpinBox()
+        self.background_fraction_spin.setRange(5.0, 50.0)
+        self.background_fraction_spin.setValue(20.0)
+        self.background_fraction_spin.setSuffix(" %")
+        self.background_fraction_spin.valueChanged.connect(self._on_scan_changed)
+        bg_form.addRow("Outer radius used", self.background_fraction_spin)
+        v.addLayout(bg_form)
+
         self.radius_slider = QSlider(Qt.Horizontal)
         self.radius_slider.valueChanged.connect(self._on_scan_changed)
         v.addWidget(self.radius_slider)
@@ -200,6 +226,11 @@ class RadialProfileWindow(QMainWindow):
         self.calibration.set_image_reference(raw_image.shape[0] if raw_image is not None else None)
         self._refresh_preview()
 
+    def _maybe_subtract_background(self, profile: np.ndarray) -> np.ndarray:
+        if not self.subtract_background_check.isChecked():
+            return profile
+        return core_radialprofile.subtract_background(profile, self.background_fraction_spin.value() / 100.0)
+
     def _refresh_preview(self) -> None:
         spectrum = self.patch_selector.current_spectrum()
         if spectrum is None:
@@ -207,12 +238,13 @@ class RadialProfileWindow(QMainWindow):
         plotting.draw_diffractogram(self.diffractogram_canvas.figure, spectrum)
         self.diffractogram_canvas.draw_idle()
 
-        profile = core_radialprofile.radial_profile(np.abs(spectrum))
+        profile = self._maybe_subtract_background(core_radialprofile.radial_profile(np.abs(spectrum)))
         band = self._current_band(len(profile)) if self._scan_group.isEnabled() else None
-        plotting.draw_radial_profile(self.profile_canvas.figure, profile, band=band)
+        plotting.draw_radial_profile(self.profile_canvas.figure, profile, band=band, title="Local Radial Profile")
         self.profile_canvas.draw_idle()
 
     def _on_calibration_changed(self) -> None:
+        self.patch_selector.set_pixel_size(self.calibration.pixel_size_nm)
         self._update_scan_display()
 
     # ------------------------------------------------------------- compute
@@ -301,15 +333,27 @@ class RadialProfileWindow(QMainWindow):
         if self._profile_stack is None:
             return
 
-        band = self._current_band(len(self._mean_profile))
-        plotting.draw_radial_profile(self.map_profile_canvas.figure, self._mean_profile, band=band)
-        size_canvas_to_figure(self.map_profile_canvas)
+        mean_profile = self._maybe_subtract_background(self._mean_profile)
+        band = self._current_band(len(mean_profile))
+        plotting.draw_radial_profile(
+            self.map_profile_canvas.figure, mean_profile, band=band, title="Average Radial Profile"
+        )
         self.map_profile_canvas.draw_idle()
 
-        intensity_map = core_radialprofile.integrate_window(self._profile_stack, center, width)
+        stack = self._maybe_subtract_background(self._profile_stack)
+        intensity_map = core_radialprofile.integrate_window(stack, center, width)
         self._last_map = intensity_map
-        plotting.draw_grid(self.map_canvas.figure, [intensity_map], [self._radius_readout(center)])
-        size_canvas_to_figure(self.map_canvas)
+        scale_bar = None
+        if self.calibration.pixel_size_nm is not None:
+            map_pixel_size = self.batch_window_step_spin.value() * self.calibration.pixel_size_nm
+            scale_bar = {"pixel_size": map_pixel_size, "units": "nm"}
+        plotting.draw_labeled_image(
+            self.map_canvas.figure,
+            intensity_map,
+            self._radius_readout(center),
+            vlimits=plotting.percentile_clip(intensity_map),
+            scale_bar=scale_bar,
+        )
         self.map_canvas.draw_idle()
         self.map_save_btn.setEnabled(True)
 

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -44,11 +45,18 @@ class PatchSelectorWidget(QWidget):
     changed = Signal()
     image_loaded = Signal()
 
-    def __init__(self, show_patch_preview: bool = True, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        show_patch_preview: bool = True,
+        parent: QWidget | None = None,
+        load_button_label: str = "Load Image / .npy…",
+    ) -> None:
         super().__init__(parent)
         self._show_patch_preview = show_patch_preview
+        self._load_button_label = load_button_label
         self.raw_image: np.ndarray | None = None
         self.patch_canvas: FigureCanvas | None = None
+        self._pixel_size: float | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -63,7 +71,7 @@ class PatchSelectorWidget(QWidget):
         group = QGroupBox("Input")
         v = QVBoxLayout(group)
 
-        load_btn = QPushButton("Load Image / .npy…")
+        load_btn = QPushButton(self._load_button_label)
         load_btn.clicked.connect(self.on_load_clicked)
         v.addWidget(load_btn)
 
@@ -82,6 +90,10 @@ class PatchSelectorWidget(QWidget):
         group = QGroupBox("Patch parameters")
         v = QVBoxLayout(group)
 
+        # FFT params and patch position side by side (instead of stacked)
+        # so this box takes roughly half the vertical space.
+        row = QHBoxLayout()
+
         form = QFormLayout()
         self.window_size_spin = QSpinBox()
         self.window_size_spin.setRange(4, 4096)
@@ -97,14 +109,15 @@ class PatchSelectorWidget(QWidget):
         form.addRow("Window size", self.window_size_spin)
         form.addRow("Crop size (zoom)", self.crop_size_spin)
         form.addRow(self.hamming_check)
-        v.addLayout(form)
+        row.addLayout(form)
 
         pos_form = QFormLayout()
         self.patch_x_spin = QSpinBox()
         self.patch_y_spin = QSpinBox()
         pos_form.addRow("Patch x", self.patch_x_spin)
         pos_form.addRow("Patch y", self.patch_y_spin)
-        v.addLayout(pos_form)
+        row.addLayout(pos_form)
+        v.addLayout(row)
         v.addWidget(QLabel("Tip: click a point on the image above to move the patch."))
 
         if self._show_patch_preview:
@@ -195,8 +208,19 @@ class PatchSelectorWidget(QWidget):
         if self.raw_image is None:
             return
         rect = (self.patch_x_spin.value(), self.patch_y_spin.value(), self.window_size_spin.value())
-        plotting.draw_raw_image(self.preview_canvas.figure, self.raw_image, rect=rect)
+        plotting.draw_raw_image(self.preview_canvas.figure, self.raw_image, rect=rect, pixel_size=self._pixel_size)
         self.preview_canvas.draw_idle()
+
+    def set_pixel_size(self, pixel_size: float | None) -> None:
+        """Set the raw image's calibration (units per pixel) for the preview's scale bar.
+
+        Decoupled from `CalibrationWidget` on purpose - the host window owns
+        both and wires `calibration.changed` to call this with
+        `calibration.pixel_size_nm`, so this widget stays reusable without
+        depending on calibration's UI.
+        """
+        self._pixel_size = pixel_size
+        self._refresh_preview()
 
     def _refresh_patch_preview(self) -> None:
         if self.raw_image is None or self.patch_canvas is None:
