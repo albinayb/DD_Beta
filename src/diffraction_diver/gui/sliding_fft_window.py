@@ -28,6 +28,7 @@ from diffraction_diver.gui import plotting
 from diffraction_diver.gui.calibration_widget import CalibrationWidget
 from diffraction_diver.gui.canvas_utils import embed_figure
 from diffraction_diver.gui.patch_selector import PatchSelectorWidget
+from diffraction_diver.gui.reflection_picker import ReflectionPicker
 from diffraction_diver.gui.workers import AnalysisWorker, FFTWorker
 
 ANALYSIS_LABELS = {"pca": "PCA", "ica": "ICA", "nmf": "NMF"}
@@ -69,6 +70,18 @@ class SlidingFFTWindow(QMainWindow):
         self.calibration.changed.connect(self._on_calibration_changed)
         controls_layout.addWidget(self.calibration)
         controls_layout.addStretch(1)
+
+        # Click a peak in the patch preview's FFT panel to calibrate from a
+        # reflection of known spacing; its status text sits right under the
+        # preview it refers to.
+        self.reflection_picker = ReflectionPicker(
+            self.patch_selector.patch_canvas,
+            1,
+            self.patch_selector,
+            self.calibration,
+            self.patch_selector.set_spectrum_selections,
+        )
+        controls_layout.insertWidget(1, self.reflection_picker.status_label)
 
         controls_scroll = QScrollArea()
         controls_scroll.setWidgetResizable(True)
@@ -163,6 +176,8 @@ class SlidingFFTWindow(QMainWindow):
         # analysis under a new, mismatched label.
         self.fft_stack = None
         self.analysis_group.setEnabled(False)
+        # The spectrum itself changed, so any picked reflection no longer applies.
+        self.reflection_picker.clear()
         raw_image = self.patch_selector.raw_image
         self.run_fft_btn.setEnabled(raw_image is not None)
         self.calibration.set_image_reference(raw_image.shape[0] if raw_image is not None else None)

@@ -175,8 +175,32 @@ def draw_orientation_with_legend(
     # tight_layout only warns/does nothing useful with manual placement.
 
 
-def draw_patch_preview(fig: Figure, patch: np.ndarray, spectrum: np.ndarray) -> None:
-    """(Re)draw a two-panel patch + FFT-magnitude preview into `fig`."""
+def _draw_peak_selections(ax, selections: list[tuple[int, int, int, str]] | None) -> None:
+    """Overlay (row, col, fit_rad, color) peak markers/boxes onto a spectrum axes."""
+    for row, col, fit_rad, color in selections or []:
+        ax.plot(col, row, "+", color=color, markersize=14, markeredgewidth=2)
+        ax.add_patch(
+            Rectangle(
+                (col - fit_rad, row - fit_rad),
+                2 * fit_rad,
+                2 * fit_rad,
+                edgecolor=color,
+                facecolor="none",
+                linewidth=1.2,
+            )
+        )
+
+
+def draw_patch_preview(
+    fig: Figure,
+    patch: np.ndarray,
+    spectrum: np.ndarray,
+    selections: list[tuple[int, int, int, str]] | None = None,
+) -> None:
+    """(Re)draw a two-panel patch + FFT-magnitude preview into `fig`.
+
+    `selections` (see `draw_diffractogram`) are overlaid on the FFT panel - the
+    second axes, which is what a click-to-pick reflection helper targets."""
     fig.clear()
     ax1 = fig.add_subplot(1, 2, 1)
     ax1.imshow(patch, cmap="gray", interpolation="none")
@@ -189,6 +213,7 @@ def draw_patch_preview(fig: Figure, patch: np.ndarray, spectrum: np.ndarray) -> 
     ax2.set_title("FFT (log magnitude)", fontsize=9)
     ax2.set_xticks([])
     ax2.set_yticks([])
+    _draw_peak_selections(ax2, selections)
     fig.tight_layout()
 
 
@@ -205,18 +230,7 @@ def draw_diffractogram(
     ax.imshow(np.log(np.abs(spectrum) + 1e-8), interpolation="none")
     ax.set_xticks([])
     ax.set_yticks([])
-    for row, col, fit_rad, color in selections or []:
-        ax.plot(col, row, "+", color=color, markersize=14, markeredgewidth=2)
-        ax.add_patch(
-            Rectangle(
-                (col - fit_rad, row - fit_rad),
-                2 * fit_rad,
-                2 * fit_rad,
-                edgecolor=color,
-                facecolor="none",
-                linewidth=1.2,
-            )
-        )
+    _draw_peak_selections(ax, selections)
     fig.tight_layout()
 
 

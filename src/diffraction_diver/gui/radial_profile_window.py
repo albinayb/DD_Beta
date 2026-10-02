@@ -35,6 +35,7 @@ from diffraction_diver.gui import plotting
 from diffraction_diver.gui.calibration_widget import CalibrationWidget
 from diffraction_diver.gui.canvas_utils import size_canvas_to_figure
 from diffraction_diver.gui.patch_selector import PatchSelectorWidget
+from diffraction_diver.gui.reflection_picker import ReflectionPicker
 from diffraction_diver.gui.workers import RadialProfileWorker
 
 
@@ -48,6 +49,7 @@ class RadialProfileWindow(QMainWindow):
         self._mean_profile: np.ndarray | None = None
         self._stack_window_size: int | None = None
         self._last_map: np.ndarray | None = None
+        self._reflection_selections: list[tuple[int, int, int, str]] | None = None
 
         self._profile_thread: QThread | None = None
         self._profile_worker: RadialProfileWorker | None = None
@@ -78,6 +80,17 @@ class RadialProfileWindow(QMainWindow):
         right_layout.addWidget(self.calibration)
         right_layout.addStretch(1)
 
+        # Click a peak in the diffractogram to calibrate from a reflection of
+        # known spacing; status text sits right under the diffractogram.
+        self.reflection_picker = ReflectionPicker(
+            self.diffractogram_canvas,
+            0,
+            self.patch_selector,
+            self.calibration,
+            self._on_reflection_selections_changed,
+        )
+        self._preview_layout.insertWidget(2, self.reflection_picker.status_label)
+
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_scroll.setWidget(right_column)
@@ -89,6 +102,7 @@ class RadialProfileWindow(QMainWindow):
 
         preview_tab = QWidget()
         preview_layout = QVBoxLayout(preview_tab)
+        self._preview_layout = preview_layout
         preview_layout.addWidget(QLabel("Diffractogram and radial profile for the current patch."))
 
         self.diffractogram_canvas = FigureCanvas(Figure(figsize=(5, 5)))
@@ -224,6 +238,12 @@ class RadialProfileWindow(QMainWindow):
         raw_image = self.patch_selector.raw_image
         self.compute_btn.setEnabled(raw_image is not None)
         self.calibration.set_image_reference(raw_image.shape[0] if raw_image is not None else None)
+        # The spectrum itself changed, so any picked reflection no longer applies.
+        self.reflection_picker.clear()
+        self._refresh_preview()
+
+    def _on_reflection_selections_changed(self, selections: list[tuple[int, int, int, str]] | None) -> None:
+        self._reflection_selections = selections
         self._refresh_preview()
 
     def _maybe_subtract_background(self, profile: np.ndarray) -> np.ndarray:
@@ -235,7 +255,9 @@ class RadialProfileWindow(QMainWindow):
         spectrum = self.patch_selector.current_spectrum()
         if spectrum is None:
             return
-        plotting.draw_diffractogram(self.diffractogram_canvas.figure, spectrum)
+        plotting.draw_diffractogram(
+            self.diffractogram_canvas.figure, spectrum, selections=self._reflection_selections
+        )
         self.diffractogram_canvas.draw_idle()
 
         profile = self._maybe_subtract_background(core_radialprofile.radial_profile(np.abs(spectrum)))

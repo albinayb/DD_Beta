@@ -57,6 +57,7 @@ class PatchSelectorWidget(QWidget):
         self.raw_image: np.ndarray | None = None
         self.patch_canvas: FigureCanvas | None = None
         self._pixel_size: float | None = None
+        self._spectrum_selections: list[tuple[int, int, int, str]] | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -122,7 +123,8 @@ class PatchSelectorWidget(QWidget):
 
         if self._show_patch_preview:
             self.patch_canvas = FigureCanvas(Figure(figsize=(5, 2.5)))
-            self.patch_canvas.setMinimumHeight(200)
+            # Tall enough to click a peak in the FFT panel for calibration.
+            self.patch_canvas.setMinimumHeight(260)
             v.addWidget(self.patch_canvas)
 
         for widget, signal_name in [
@@ -167,6 +169,9 @@ class PatchSelectorWidget(QWidget):
         self._update_spin_ranges()
         self._refresh_preview()
         self._refresh_patch_preview()
+        # image_loaded first: hosts reset image-tied state (calibration,
+        # computed stacks) before the generic `changed` refresh runs.
+        self.image_loaded.emit()
         self.changed.emit()
 
     def _update_spin_ranges(self) -> None:
@@ -225,8 +230,18 @@ class PatchSelectorWidget(QWidget):
     def _refresh_patch_preview(self) -> None:
         if self.raw_image is None or self.patch_canvas is None:
             return
-        plotting.draw_patch_preview(self.patch_canvas.figure, self.current_patch(), self.current_spectrum())
+        plotting.draw_patch_preview(
+            self.patch_canvas.figure,
+            self.current_patch(),
+            self.current_spectrum(),
+            selections=self._spectrum_selections,
+        )
         self.patch_canvas.draw_idle()
+
+    def set_spectrum_selections(self, selections: list[tuple[int, int, int, str]] | None) -> None:
+        """Overlay peak markers on the patch preview's FFT panel (see `draw_diffractogram`)."""
+        self._spectrum_selections = selections
+        self._refresh_patch_preview()
 
     # ---------------------------------------------------------------- state
 
